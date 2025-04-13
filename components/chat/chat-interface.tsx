@@ -2,14 +2,27 @@
 
 import type React from "react"
 
-import { useChat } from "@ai-sdk/react"
-import { useState, useRef, useEffect } from "react"
+import { useChat } from "@/contexts/chat-context"
+import { useEffect, useRef, useState, useCallback } from "react"
+import { useChat as useAIChat } from "@ai-sdk/react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Loader2, Send, Mic, MicOff, User, TerminalIcon } from "lucide-react"
+import {
+  Loader2,
+  Send,
+  Mic,
+  MicOff,
+  ImageIcon,
+  Paperclip,
+  Code,
+  BookOpen,
+  Palette,
+  MessageSquare,
+  X,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHotkeys } from "@/hooks/use-hotkeys"
 import { useSupabaseUser } from "@/hooks/use-supabase-user"
@@ -17,41 +30,65 @@ import { MessageContent } from "./message-content"
 import { MessageActions } from "./message-actions"
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition"
 import { ErrorBoundary } from "@/components/error-boundary"
-import { useMode } from "@/contexts/mode-context"
-import { ModeSelector } from "@/components/mode/mode-selector"
-import { ModeDetails } from "@/components/mode/mode-details"
-import { enhanceUserQuery } from "@/lib/mode-handlers"
-import { Terminal } from "@/components/terminal/terminal"
+import { ModelSelector } from "./model-selector"
+import type { ChatMode } from "@/lib/types"
+import { format } from "date-fns"
 
-export function ChatInterface() {
-  const { user, loading: userLoading } = useSupabaseUser()
-  const { currentMode, isModeLoading } = useMode()
+interface ChatInterfaceProps {
+  tabId: string
+  mode: ChatMode
+}
+
+export function ChatInterface({ tabId, mode }: ChatInterfaceProps) {
+  const { user } = useSupabaseUser()
+  const { getTabModel, setTabModel, updateTabMessages, settings } = useChat()
   const [isRecording, setIsRecording] = useState(false)
-  const [showModeDetails, setShowModeDetails] = useState(false)
-  const [showTerminal, setShowTerminal] = useState(false)
+  const [attachments, setAttachments] = useState<File[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const selectedModel = getTabModel(tabId)
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error, append, reload, stop } = useChat({
+  // Create a chat instance with the current model
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit: originalHandleSubmit,
+    isLoading,
+    error,
+    reload,
+    stop,
+  } = useAIChat({
     api: "/api/chat",
     body: {
-      mode: currentMode,
+      modelId: selectedModel.id,
+      mode,
     },
     onResponse: (response) => {
-      // You can log analytics events here
       if (response.status === 200) {
         console.log("Chat response received successfully")
       }
     },
     onFinish: () => {
-      // Scroll to bottom when message is complete
       scrollToBottom()
+      // Update tab messages when a message is completed
+      updateTabMessages(tabId, messages)
     },
     onError: (error) => {
       console.error("Chat error:", error)
     },
   })
+
+  // Custom submit handler to update conversation history
+  const handleSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      originalHandleSubmit(e)
+      // Clear attachments after sending
+      setAttachments([])
+    },
+    [originalHandleSubmit],
+  )
 
   const { transcript, listening, startListening, stopListening, browserSupportsSpeechRecognition } =
     useSpeechRecognition({
@@ -61,16 +98,16 @@ export function ChatInterface() {
     })
 
   // Scroll to bottom of messages
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" })
     }
-  }
+  }, [])
 
   // Auto-scroll when new messages arrive
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, scrollToBottom])
 
   // Focus input on mount
   useEffect(() => {
@@ -84,9 +121,7 @@ export function ChatInterface() {
     [
       "mod+enter",
       () => {
-        if (input.trim()) {
-          const form = new FormData()
-          form.append("message", input)
+        if (!isLoading && input.trim()) {
           handleSubmit(new Event("submit") as any)
         }
       },
@@ -99,15 +134,9 @@ export function ChatInterface() {
         }
       },
     ],
-    [
-      "ctrl+`",
-      () => {
-        setShowTerminal(!showTerminal)
-      },
-    ],
   ])
 
-  const toggleRecording = () => {
+  const toggleRecording = useCallback(() => {
     if (isRecording) {
       stopListening()
       setIsRecording(false)
@@ -115,38 +144,79 @@ export function ChatInterface() {
       startListening()
       setIsRecording(true)
     }
-  }
+  }, [isRecording, startListening, stopListening])
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      if (input.trim()) {
-        const form = new FormData()
-        form.append("message", input)
-        handleSubmit(new Event("submit") as any)
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey && settings.sendWithEnter) {
+        e.preventDefault()
+        if (!isLoading && input.trim()) {
+          handleSubmit(new Event("submit") as any)
+        }
       }
+    },
+    [handleSubmit, input, isLoading, settings.sendWithEnter],
+  )
+
+  const handleModelChange = useCallback(
+    (model: any) => {
+      setTabModel(tabId, model.id)
+    },
+    [setTabModel, tabId],
+  )
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setAttachments(Array.from(e.target.files))
+    }
+  }, [])
+
+  // Get mode-specific welcome message and placeholder
+  const getModeConfig = () => {
+    switch (mode) {
+      case "code":
+        return {
+          welcomeTitle: "Code Assistant",
+          welcomeMessage: "Ask me to write, explain, or debug code in any programming language.",
+          placeholder: "Describe the code you need or paste code to debug...",
+          icon: <Code className="h-5 w-5 mr-2" />,
+        }
+      case "research":
+        return {
+          welcomeTitle: "Research Assistant",
+          welcomeMessage: "Ask me to research topics, summarize information, or cite sources.",
+          placeholder: "What would you like to research?",
+          icon: <BookOpen className="h-5 w-5 mr-2" />,
+        }
+      case "creative":
+        return {
+          welcomeTitle: "Creative Assistant",
+          welcomeMessage: "Ask me to help with creative writing, ideas, or visual descriptions.",
+          placeholder: "Describe what you'd like me to create...",
+          icon: <Palette className="h-5 w-5 mr-2" />,
+        }
+      default:
+        return {
+          welcomeTitle: "General Assistant",
+          welcomeMessage: "How can I help you today?",
+          placeholder: "Type your message...",
+          icon: <MessageSquare className="h-5 w-5 mr-2" />,
+        }
     }
   }
 
-  // Handle custom submit with mode-enhanced query
-  const handleEnhancedSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const modeConfig = getModeConfig()
 
-    if (!input.trim()) return
-
-    // Enhance the query based on the current mode
-    const enhancedInput = enhanceUserQuery(input, currentMode)
-
-    // Use the append method to add the message with the original input
-    // The API will receive the enhanced input
-    append({
-      role: "user",
-      content: input,
-      id: Date.now().toString(),
-    })
-
-    // Clear the input
-    handleInputChange({ target: { value: "" } } as React.ChangeEvent<HTMLTextAreaElement>)
+  // Apply font size from settings
+  const getFontSizeClass = () => {
+    switch (settings.fontSize) {
+      case "small":
+        return "text-sm"
+      case "large":
+        return "text-lg"
+      default:
+        return "text-base"
+    }
   }
 
   return (
@@ -154,85 +224,49 @@ export function ChatInterface() {
       fallback={
         <div className="p-4 text-red-500">Something went wrong with the chat interface. Please refresh the page.</div>
       }
-      onReset={() => {
-        // Reset the chat state if needed
-        if (isLoading) {
-          stop()
-        }
-      }}
     >
-      <div className="flex flex-col h-full">
-        <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <ModeSelector />
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setShowTerminal(!showTerminal)}
-              aria-label={showTerminal ? "Hide terminal" : "Show terminal"}
-              className="flex-shrink-0"
-            >
-              <TerminalIcon className="h-4 w-4" />
-            </Button>
+      <div className="flex flex-col h-full p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            {modeConfig.icon}
+            <h2 className="text-xl font-semibold">{modeConfig.welcomeTitle}</h2>
           </div>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full mt-1"
-            onClick={() => setShowModeDetails(!showModeDetails)}
-          >
-            {showModeDetails ? "Hide mode details" : "Show mode details"}
-          </Button>
-
-          {showModeDetails && (
-            <div className="mt-2">
-              <ModeDetails />
-            </div>
-          )}
-
-          {showTerminal && (
-            <div className="mt-4">
-              <Terminal />
-            </div>
-          )}
+          <div className="w-48">
+            <ModelSelector selectedModel={selectedModel} onModelChange={handleModelChange} />
+          </div>
         </div>
 
         <Card className="flex-1 overflow-hidden border rounded-lg">
-          <ScrollArea ref={scrollAreaRef} className="h-[calc(100vh-280px)] p-4">
-            <div className="flex flex-col gap-4">
+          <ScrollArea ref={scrollAreaRef} className="h-[calc(100vh-240px)] p-4">
+            <div className={cn("flex flex-col gap-6", getFontSizeClass())}>
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full p-8 text-center text-muted-foreground">
-                  <div>
-                    <h3 className="text-lg font-semibold mb-2">Welcome to AIDEN Chat</h3>
-                    <p>
-                      You are in{" "}
-                      {currentMode
-                        .split("-")
-                        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                        .join(" ")}{" "}
-                      mode.
-                    </p>
-                    <p className="mt-2">Start a conversation by typing a message below.</p>
-                    <p className="mt-2 text-sm">
-                      Press <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Ctrl+`</kbd> to toggle the terminal.
-                    </p>
+                  <div className="max-w-md">
+                    <h3 className="text-lg font-semibold mb-2">{modeConfig.welcomeTitle}</h3>
+                    <p>{modeConfig.welcomeMessage}</p>
+                    <p className="text-sm mt-2">Currently using: {selectedModel.name}</p>
                   </div>
                 </div>
               ) : (
-                messages.map((message, index) => (
+                messages.map((message) => (
                   <div
                     key={message.id}
                     className={cn(
-                      "flex gap-3 p-4 rounded-lg",
-                      message.role === "user" ? "bg-muted/50" : "bg-background",
+                      "flex gap-4 max-w-3xl",
+                      message.role === "user"
+                        ? settings.messageAlignment === "right"
+                          ? "ml-auto flex-row-reverse"
+                          : ""
+                        : settings.messageAlignment === "right"
+                          ? "mr-auto"
+                          : "",
                     )}
                   >
-                    <Avatar className="h-8 w-8">
+                    <Avatar className="h-8 w-8 mt-1 flex-shrink-0">
                       {message.role === "user" ? (
                         <>
                           <AvatarImage src={user?.user_metadata?.avatar_url || "/placeholder.svg"} alt="User" />
-                          <AvatarFallback>{user?.email?.charAt(0) || <User className="h-4 w-4" />}</AvatarFallback>
+                          <AvatarFallback>{user?.email?.charAt(0) || "U"}</AvatarFallback>
                         </>
                       ) : (
                         <>
@@ -241,22 +275,35 @@ export function ChatInterface() {
                         </>
                       )}
                     </Avatar>
-                    <div className="flex flex-col flex-1 gap-1">
-                      <div className="flex items-center gap-2">
+                    <div
+                      className={cn(
+                        "flex flex-col gap-1",
+                        message.role === "user" && settings.messageAlignment === "right" ? "items-end" : "items-start",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "flex items-center gap-2",
+                          message.role === "user" && settings.messageAlignment === "right" ? "flex-row-reverse" : "",
+                        )}
+                      >
                         <span className="font-medium">
                           {message.role === "user" ? user?.user_metadata?.full_name || "You" : "AIDEN"}
                         </span>
-                        <span className="text-xs text-muted-foreground">{new Date().toLocaleTimeString()}</span>
-                        {message.role === "assistant" && index > 0 && (
-                          <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md">
-                            {currentMode
-                              .split("-")
-                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                              .join(" ")}
+                        {settings.showTimestamps && (
+                          <span className="text-xs text-muted-foreground">
+                            {format(message.createdAt || new Date(), "h:mm a")}
                           </span>
                         )}
                       </div>
-                      <MessageContent content={message.content} role={message.role} />
+                      <div
+                        className={cn(
+                          "p-3 rounded-lg",
+                          message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted",
+                        )}
+                      >
+                        <MessageContent content={message.content} role={message.role} mode={mode} />
+                      </div>
                       {message.role === "assistant" && (
                         <MessageActions message={message} onRegenerate={() => reload()} />
                       )}
@@ -265,25 +312,23 @@ export function ChatInterface() {
                 ))
               )}
               {isLoading && (
-                <div className="flex gap-3 p-4">
-                  <Avatar className="h-8 w-8">
+                <div className="flex gap-4 max-w-3xl">
+                  <Avatar className="h-8 w-8 mt-1">
                     <AvatarImage src="/aiden-avatar.png" alt="AIDEN" />
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">AIDEN</span>
-                      <span className="text-xs text-muted-foreground">{new Date().toLocaleTimeString()}</span>
-                      <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md">
-                        {currentMode
-                          .split("-")
-                          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                          .join(" ")}
-                      </span>
+                      {settings.showTimestamps && (
+                        <span className="text-xs text-muted-foreground">{format(new Date(), "h:mm a")}</span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Thinking...</span>
+                    <div className="p-3 rounded-lg bg-muted">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Thinking...</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -301,40 +346,102 @@ export function ChatInterface() {
           </ScrollArea>
         </Card>
 
-        <form onSubmit={handleEnhancedSubmit} className="flex items-end gap-2 mt-2">
-          <div className="relative flex-1">
-            <Textarea
-              ref={inputRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder={`Ask a question in ${currentMode
-                .split("-")
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                .join(" ")} mode...`}
-              className="min-h-[60px] resize-none pr-12"
-              disabled={isLoading || isModeLoading}
-              rows={1}
-              aria-label="Chat input"
-            />
-            {browserSupportsSpeechRecognition && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 bottom-2"
-                onClick={toggleRecording}
-                disabled={isLoading || isModeLoading}
-                aria-label={isRecording ? "Stop recording" : "Start recording"}
-              >
-                {isRecording ? <MicOff className="h-5 w-5 text-red-500" /> : <Mic className="h-5 w-5" />}
-              </Button>
-            )}
+        <form onSubmit={handleSubmit} className="mt-4">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {attachments.map((file, index) => (
+                <div key={index} className="flex items-center gap-1 bg-muted p-1 rounded text-xs">
+                  <span className="truncate max-w-[100px]">{file.name}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-4 w-4"
+                    onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2">
+            <Card className="flex-1 relative">
+              <Textarea
+                ref={inputRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder={modeConfig.placeholder}
+                className="min-h-[60px] resize-none pr-24 pl-4 py-3 rounded-md border-0"
+                disabled={isLoading}
+                rows={1}
+                aria-label="Chat input"
+              />
+              <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                {mode === "creative" && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={isLoading}
+                    aria-label="Add image"
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                  </Button>
+                )}
+
+                <input
+                  type="file"
+                  id="file-upload"
+                  className="hidden"
+                  multiple
+                  onChange={handleFileChange}
+                  disabled={isLoading}
+                />
+                <label htmlFor="file-upload">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 cursor-pointer"
+                    disabled={isLoading}
+                    aria-label="Attach file"
+                    asChild
+                  >
+                    <span>
+                      <Paperclip className="h-4 w-4" />
+                    </span>
+                  </Button>
+                </label>
+
+                {browserSupportsSpeechRecognition && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={toggleRecording}
+                    disabled={isLoading}
+                    aria-label={isRecording ? "Stop recording" : "Start recording"}
+                  >
+                    {isRecording ? <MicOff className="h-4 w-4 text-red-500" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                )}
+              </div>
+            </Card>
+            <Button
+              type="submit"
+              disabled={isLoading || (!input.trim() && attachments.length === 0)}
+              aria-label="Send message"
+              className="h-10 px-4"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              <span>Send</span>
+            </Button>
           </div>
-          <Button type="submit" disabled={isLoading || isModeLoading || !input.trim()} aria-label="Send message">
-            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            <span className="sr-only">Send</span>
-          </Button>
         </form>
       </div>
     </ErrorBoundary>

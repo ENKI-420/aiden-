@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
@@ -15,7 +15,7 @@ export function MessageActions({ message, onRegenerate }: MessageActionsProps) {
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState<"positive" | "negative" | null>(null)
 
-  const copyToClipboard = async () => {
+  const copyToClipboard = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(message.content)
       setCopied(true)
@@ -32,38 +32,41 @@ export function MessageActions({ message, onRegenerate }: MessageActionsProps) {
         variant: "destructive",
       })
     }
-  }
+  }, [message.content])
 
-  const handleFeedback = async (type: "positive" | "negative") => {
-    setFeedback(type)
+  const handleFeedback = useCallback(
+    async (type: "positive" | "negative") => {
+      setFeedback(type)
 
-    try {
-      // Send feedback to your API
-      await fetch("/api/feedback", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messageId: message.id,
-          feedback: type,
-        }),
-      })
+      try {
+        // Send feedback to your API
+        await fetch("/api/feedback", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messageId: message.id,
+            feedback: type,
+          }),
+        })
 
-      toast({
-        title: "Feedback received",
-        description: "Thank you for your feedback!",
-      })
-    } catch (err) {
-      console.error("Failed to send feedback: ", err)
-      toast({
-        title: "Failed to send feedback",
-        description: "Please try again later.",
-        variant: "destructive",
-      })
-      setFeedback(null)
-    }
-  }
+        toast({
+          title: "Feedback received",
+          description: "Thank you for your feedback!",
+        })
+      } catch (err) {
+        console.error("Failed to send feedback: ", err)
+        toast({
+          title: "Failed to send feedback",
+          description: "Please try again later.",
+          variant: "destructive",
+        })
+        setFeedback(null)
+      }
+    },
+    [message.id],
+  )
 
   return (
     <div className="flex items-center gap-2 mt-2">
