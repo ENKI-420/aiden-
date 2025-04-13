@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("NEXT_POSTGRES_PRISMA_URL")
+  directUrl = env("NEXT_POSTGRES_URL_NON_POOLING")
+}
+
+// Memory threads table
+model MemoryThread {
+  id            String   @id @default(uuid())
+  title         String
+  contextStack  Json     @default("[]")
+  emotionalTuning String  @default("neutral")
+  accessLevel   String   @default("public")
+  rolesAllowed  String[] @default(["admin", "AIDEN"])
+  lastInvoked   DateTime @default(now())
+  memoryVectors Float[]  @default([])
+  content       String
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("memory_threads")
+}
+
+// User preferences table
+model UserPreference {
+  id            String   @id @default(uuid())
+  userId        String   @unique @map("user_id")
+  preferredMode String   @default("general") @map("preferred_mode")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("user_preferences")
+}
+
+// Chat logs table
+model ChatLog {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  messages  Json
+  mode      String   @default("general")
+  timestamp DateTime @default(now())
+
+  @@map("chat_logs")
+}
+
+// Message feedback table
+model MessageFeedback {
+  id           String   @id @default(uuid())
+  messageId    String   @map("message_id")
+  userId       String   @map("user_id")
+  feedbackType String   @map("feedback_type")
+  timestamp    DateTime @default(now())
+
+  @@map("message_feedback")
+}
+
+// Voice interaction history
+model VoiceInteraction {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  input     String
+  output    String
+  timestamp DateTime @default(now())
+
+  @@map("voice_interactions")
+}

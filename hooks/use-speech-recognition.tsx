@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 
 interface UseSpeechRecognitionProps {
   onResult?: (result: string) => void
@@ -33,22 +33,30 @@ export function useSpeechRecognition({
 }: UseSpeechRecognitionProps = {}): UseSpeechRecognitionReturn {
   const [transcript, setTranscript] = useState("")
   const [listening, setListening] = useState(false)
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const [browserSupportsSpeechRecognition, setBrowserSupportsSpeechRecognition] = useState(false)
 
+  // Use a ref for the recognition instance to avoid re-creating it on every render
+  const recognitionRef = useRef<any>(null)
+  const onResultRef = useRef(onResult)
+
+  // Update the ref when onResult changes
+  useEffect(() => {
+    onResultRef.current = onResult
+  }, [onResult])
+
+  // Initialize speech recognition once
   useEffect(() => {
     if (typeof window !== "undefined") {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
       if (SpeechRecognition) {
         setBrowserSupportsSpeechRecognition(true)
-        const recognitionInstance = new SpeechRecognition()
+        recognitionRef.current = new SpeechRecognition()
+        recognitionRef.current.continuous = continuous
+        recognitionRef.current.interimResults = interimResults
+        recognitionRef.current.lang = lang
 
-        recognitionInstance.continuous = continuous
-        recognitionInstance.interimResults = interimResults
-        recognitionInstance.lang = lang
-
-        recognitionInstance.onresult = (event) => {
+        recognitionRef.current.onresult = (event: any) => {
           let finalTranscript = ""
 
           for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -60,54 +68,72 @@ export function useSpeechRecognition({
 
           if (finalTranscript) {
             setTranscript(finalTranscript)
-            if (onResult) {
-              onResult(finalTranscript)
+            if (onResultRef.current) {
+              onResultRef.current(finalTranscript)
             }
           }
         }
 
-        recognitionInstance.onend = () => {
+        recognitionRef.current.onend = () => {
           setListening(false)
         }
 
-        recognitionInstance.onerror = (event) => {
+        recognitionRef.current.onerror = (event: any) => {
           console.error("Speech recognition error", event.error)
           setListening(false)
         }
-
-        setRecognition(recognitionInstance)
       }
     }
 
+    // Cleanup function
     return () => {
-      if (recognition) {
-        recognition.onresult = null
-        recognition.onend = null
-        recognition.onerror = null
+      if (recognitionRef.current) {
+        recognitionRef.current.onresult = null
+        recognitionRef.current.onend = null
+        recognitionRef.current.onerror = null
+
         if (listening) {
-          recognition.stop()
+          try {
+            recognitionRef.current.stop()
+          } catch (e) {
+            console.error("Error stopping speech recognition:", e)
+          }
         }
       }
     }
-  }, [continuous, interimResults, lang, onResult])
+  }, []) // Empty dependency array - only run once on mount
+
+  // Update recognition properties when they change
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.continuous = continuous
+      recognitionRef.current.interimResults = interimResults
+      recognitionRef.current.lang = lang
+    }
+  }, [continuous, interimResults, lang])
 
   const startListening = useCallback(() => {
-    if (recognition && !listening) {
+    if (recognitionRef.current && !listening) {
       try {
-        recognition.start()
+        recognitionRef.current.start()
         setListening(true)
       } catch (error) {
         console.error("Error starting speech recognition:", error)
       }
     }
-  }, [recognition, listening])
+  }, [listening])
 
   const stopListening = useCallback(() => {
-    if (recognition && listening) {
-      recognition.stop()
-      setListening(false)
+    if (recognitionRef.current && listening) {
+      try {
+        recognitionRef.current.stop()
+        // Don't set listening to false here, let the onend handler do it
+      } catch (error) {
+        console.error("Error stopping speech recognition:", error)
+        setListening(false)
+      }
     }
-  }, [recognition, listening])
+  }, [listening])
 
   const resetTranscript = useCallback(() => {
     setTranscript("")
