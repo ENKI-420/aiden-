@@ -1,10 +1,10 @@
-import { ChatContainer } from "@/components/chat/chat-container"
-import { ChatProvider } from "@/contexts/chat-context"
+import { SidebarProvider } from "@/components/ui/sidebar"
+import Dashboard from "@/components/dashboard"
 
 export default function Home() {
   return (
-    <ChatProvider>
-      <ChatContainer />
-    </ChatProvider>
+    <SidebarProvider>
+      <Dashboard />
+    </SidebarProvider>
   )
 }
