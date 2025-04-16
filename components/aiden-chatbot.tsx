@@ -22,6 +22,14 @@ import type React from "react"
 import { useCallback } from "react"
 import { Shield } from "lucide-react"
 
+// Replace the import for AI SDK with our simplified implementation
+// Remove these lines:
+// import { generateText } from "ai"
+// import { openai } from "@ai-sdk/openai"
+
+// Add this import instead:
+import { generateChatCompletion, type ChatMessage } from "@/lib/ai-chat"
+
 // Define types for better type safety
 interface Message {
   id: string
@@ -140,7 +148,7 @@ function AidenChatbot({ mutationData = [], user, apiKey, initialMessages, onErro
     }
   }, [])
 
-  // Handle sending messages to the AI
+  // Then find the sendMessageToAI function and replace it with this implementation:
   const sendMessageToAI = useCallback(
     async (userMessage: string, retryCount = 0): Promise<string> => {
       try {
@@ -158,7 +166,7 @@ function AidenChatbot({ mutationData = [], user, apiKey, initialMessages, onErro
           .map((msg) => ({
             role: msg.role,
             content: msg.content,
-          }))
+          })) as ChatMessage[]
 
         // Add the new user message
         conversationHistory.push({
@@ -166,59 +174,14 @@ function AidenChatbot({ mutationData = [], user, apiKey, initialMessages, onErro
           content: userMessage,
         })
 
-        // Make the API request
-        console.log("Sending request to API:", API_ENDPOINT)
-        const response = await fetch(API_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}`, "X-API-Key": apiKey } : {}),
-          },
-          body: JSON.stringify({
-            messages: conversationHistory,
-            mutationData: mutationData,
-            user: user
-              ? {
-                  id: user.id,
-                  role: user.role,
-                }
-              : undefined,
-          }),
-          signal: abortControllerRef.current.signal,
+        // Use our simplified implementation instead of the AI SDK
+        const response = await generateChatCompletion({
+          messages: conversationHistory,
+          temperature: 0.7,
+          max_tokens: 2000,
         })
 
-        if (!response.ok) {
-          console.error("API response not OK:", response.status, response.statusText)
-          let errorMessage = `Server error: ${response.status}`
-
-          try {
-            const errorData = await response.json()
-            console.error("Error data:", errorData)
-            if (errorData?.error) {
-              errorMessage = errorData.error
-            }
-          } catch (e) {
-            console.error("Failed to parse error response:", e)
-          }
-
-          throw new Error(errorMessage)
-        }
-
-        // Check if response is JSON
-        const contentType = response.headers.get("content-type")
-        if (!contentType || !contentType.includes("application/json")) {
-          console.error("Non-JSON response received:", contentType)
-          throw new Error("Unexpected response format from server")
-        }
-
-        const data = await response.json()
-
-        if (!data.message) {
-          console.error("Invalid response format:", data)
-          throw new Error("Invalid response format from server")
-        }
-
-        return data.message
+        return response
       } catch (error) {
         // Handle aborted requests
         if (error instanceof DOMException && error.name === "AbortError") {

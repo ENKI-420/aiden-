@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { rateLimit } from "@/lib/rate-limit"
 import { logger } from "@/lib/logger"
+import { generateChatCompletion, type ChatMessage } from "@/lib/ai-chat"
 
 // Define types for better type safety
 interface Message {
@@ -115,57 +116,20 @@ export async function POST(request: NextRequest) {
 
     // Call OpenAI API
     try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages,
-          temperature: 0.7,
-          max_tokens: 2000,
-          top_p: 1,
-          frequency_penalty: 0,
-          presence_penalty: 0,
-        }),
+      // Use our simplified implementation instead of calling OpenAI API
+      const response = await generateChatCompletion({
+        messages: messages as ChatMessage[],
+        temperature: 0.7,
+        max_tokens: 2000,
       })
 
-      // Handle API errors
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorData
-        try {
-          errorData = JSON.parse(errorText)
-        } catch (e) {
-          errorData = { text: errorText }
-        }
-
-        logger.error({
-          action: "aiden_api_error",
-          status: response.status,
-          error: errorData,
-        })
-
-        // Fall back to mock response on API error
-        return NextResponse.json(
-          { message: generateMockResponse(body.messages[body.messages.length - 1].content, body.mutationData) },
-          { headers: corsHeaders },
-        )
-      }
-
-      // Process successful response
-      const data = await response.json()
-
-      // Log successful response (excluding sensitive data)
+      // Log successful response
       logger.info({
         action: "aiden_response",
         status: "success",
-        tokenUsage: data.usage,
       })
 
-      return NextResponse.json({ message: data.choices[0].message.content }, { headers: corsHeaders })
+      return NextResponse.json({ message: response }, { headers: corsHeaders })
     } catch (error) {
       logger.error({
         action: "aiden_openai_fetch_error",
